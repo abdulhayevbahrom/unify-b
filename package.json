@@ -1,0 +1,25 @@
+{
+  "name": "backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "nodemon src/local-server.js",
+    "start": "node src/local-server.js",
+    "test": "node --test",
+    "clear:test-payments": "node scripts/clear-test-payments.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.1",
+    "mongoose": "^9.6.3",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
