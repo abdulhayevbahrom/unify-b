@@ -576,6 +576,7 @@ export async function getDebtors(_req, res) {
           fullName: student?.fullName || '-',
           phone: student?.phone || '-',
           secondaryPhone: student?.secondaryPhone || '',
+          subject: student?.groupId?.subject || '',
           groupName: [...new Set(debt.months.map((month) => groupMap.get(month.groupId.toString()) || '-'))].join(', '),
           totalDebt: debt.totalDebt,
           months: debt.months.map((month) => ({ balanceId: month.balanceId.toString(), groupId: month.groupId.toString(), groupName: groupMap.get(month.groupId.toString()) || '-', month: month.month, debtAmount: month.debtAmount })),

@@ -17,7 +17,7 @@ export async function getFinancialReport(req, res) {
   try {
     const { from, to } = getDateRange(req.query);
     const [payments, expenses, debtRows] = await Promise.all([
-      Payment.find({ paidAt: { $gte: from, $lte: to }, status: { $nin: ['cancelled', 'refunded'] }, cashStatus: 'approved' }).populate('studentId', 'fullName phone'),
+      Payment.find({ paidAt: { $gte: from, $lte: to }, status: 'active' }).populate('studentId', 'fullName phone'),
       Expense.find({ spentAt: { $gte: from, $lte: to } }),
       StudentMonthlyBalance.aggregate([{ $match: { debtAmount: { $gt: 0 } } }, { $group: { _id: null, total: { $sum: '$debtAmount' } } }]),
     ]);
@@ -32,7 +32,7 @@ export async function getFinancialReport(req, res) {
 export async function exportFinancialReport(req, res) {
   try {
     const { from, to } = getDateRange(req.query);
-    const payments = await Payment.find({ paidAt: { $gte: from, $lte: to } }).populate('studentId', 'fullName phone').populate('createdBy', 'fullName').sort({ paidAt: -1 });
+    const payments = await Payment.find({ paidAt: { $gte: from, $lte: to }, status: 'active' }).populate('studentId', 'fullName phone').populate('createdBy', 'fullName').sort({ paidAt: -1 });
     const rows = [['Sana', 'O‘quvchi', 'Telefon', 'Summa', 'Usul', 'Holat', 'Kiritgan', 'Izoh']];
     payments.forEach((item) => rows.push([
       item.paidAt.toISOString(), item.studentId?.fullName || '-', item.studentId?.phone || '-', item.amount,
