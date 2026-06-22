@@ -163,6 +163,28 @@ function buildPaymentStats(payments) {
   return { totalAmount, totalsByMethod };
 }
 
+async function syncCashClosure(closureId) {
+  if (!closureId) return;
+  const closure = await CashClosure.findById(closureId);
+  if (!closure) return;
+
+  const payments = await Payment.find({ cashClosureId: closureId, status: 'active' }).sort({ paidAt: 1 });
+  const stats = buildPaymentStats(payments);
+  closure.totalAmount = stats.totalAmount;
+  closure.totalsByMethod = stats.totalsByMethod;
+  closure.paymentsCount = payments.length;
+  closure.paymentIds = payments.map((payment) => payment._id);
+  if (payments.length) closure.from = payments[0].paidAt;
+  await closure.save();
+
+  if (closure.status === 'pending_owner') {
+    await Notification.updateMany(
+      { type: 'cash_closure', relatedId: closure._id },
+      { message: `${payments.length} ta to'lov, jami ${stats.totalAmount.toLocaleString('uz-UZ')} so'm. Owner tasdig'i kutilmoqda.` },
+    );
+  }
+}
+
 function toPauseResponse(pause) {
   const data = pause.toObject({ virtuals: true });
 
@@ -376,13 +398,12 @@ export async function updatePayment(req, res) {
     if (req.user.role !== 'owner') return res.status(403).json({ message: 'To‘lovni faqat owner tahrirlashi mumkin' });
     const payment = await Payment.findById(req.params.paymentId);
     if (!payment) return res.status(404).json({ message: 'To‘lov topilmadi' });
-    if (payment.status !== 'active' || payment.cashStatus !== 'open') {
-      return res.status(409).json({ message: 'Faqat yopilmagan kassadagi faol to‘lovni tahrirlash mumkin' });
-    }
-    const data = await preparePayment(payment.studentId, req.body, payment._id);
+    if (payment.status !== 'active') return res.status(409).json({ message: 'Bekor qilingan to‘lovni tahrirlab bo‘lmaydi' });
+    const data = await preparePayment(payment.studentId, { ...req.body, paidAt: req.body.paidAt || payment.paidAt }, payment._id);
     payment.editHistory.push({ amount: payment.amount, method: payment.method, paidAt: payment.paidAt, note: payment.note, editedBy: req.user._id });
     payment.set(data);
     await payment.save();
+    await syncCashClosure(payment.cashClosureId);
     await rebuildStudentBalances(payment.studentId);
     return res.json(toPaymentResponse(payment));
   } catch (error) {
@@ -430,12 +451,17 @@ export async function reversePayment(req, res) {
     const payment = await Payment.findById(req.params.paymentId);
     if (!payment) return res.status(404).json({ message: 'To‘lov topilmadi' });
     if (payment.status !== 'active') return res.status(409).json({ message: 'Bu to‘lov avval bekor qilingan' });
-    if (payment.cashStatus === 'pending_owner') return res.status(409).json({ message: 'Avval kassa tasdig‘ini yakunlang' });
+    const pendingClosureId = payment.cashStatus === 'pending_owner' ? payment.cashClosureId : null;
     payment.status = payment.cashStatus === 'approved' ? 'refunded' : 'cancelled';
     payment.reversalReason = reason;
     payment.reversedAt = new Date();
     payment.reversedBy = req.user._id;
+    if (pendingClosureId) {
+      payment.cashClosureId = null;
+      payment.cashStatus = 'open';
+    }
     await payment.save();
+    await syncCashClosure(pendingClosureId);
     await rebuildStudentBalances(payment.studentId);
     return res.json(toPaymentResponse(payment));
   } catch (error) {

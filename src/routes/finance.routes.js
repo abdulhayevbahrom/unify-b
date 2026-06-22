@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireOwner } from '../middleware/auth.js';
 import {
   createPayment,
   createStudentPause,
@@ -23,8 +24,8 @@ router.post('/cash-closures', closeCashRegister);
 router.put('/cash-closures/:closureId/review', reviewCashClosure);
 router.get('/students/:studentId', getStudentFinance);
 router.post('/students/:studentId/payments', createPayment);
-router.put('/payments/:paymentId/reverse', reversePayment);
-router.put('/payments/:paymentId', updatePayment);
+router.put('/payments/:paymentId/reverse', requireOwner, reversePayment);
+router.put('/payments/:paymentId', requireOwner, updatePayment);
 router.post('/students/:studentId/pauses', createStudentPause);
 router.post('/students/:studentId/activate', activatePausedStudent);
 router.put('/students/:studentId/pauses/:pauseId', updateStudentPause);
