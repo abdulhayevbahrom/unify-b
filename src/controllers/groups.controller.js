@@ -93,7 +93,6 @@ function toGroupResponse(group, studentsCount = 0) {
           fullName: data.teacherId.fullName,
           subject: data.teacherId.subject,
           phone: data.teacherId.phone,
-          telegram: data.teacherId.telegram,
           gender: data.teacherId.gender,
           experienceYears: data.teacherId.experienceYears,
           status: data.teacherId.status,

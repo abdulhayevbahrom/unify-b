@@ -8,7 +8,6 @@ function buildTeacherFilter(query) {
     filter.$or = [
       { fullName: { $regex: query.search, $options: 'i' } },
       { phone: { $regex: query.search, $options: 'i' } },
-      { telegram: { $regex: query.search, $options: 'i' } },
     ];
   }
 
@@ -29,7 +28,6 @@ function normalizeTeacherPayload(body) {
     fullName: body.fullName?.trim(),
     subject: body.subject?.trim(),
     phone: body.phone?.trim(),
-    telegram: body.telegram?.trim() || '',
     monthlySalary: Number(body.monthlySalary) || 0,
     salaryType: body.salaryType === 'percentage' ? 'percentage' : 'fixed',
     salaryPercentage: Number(body.salaryPercentage) || 0,
@@ -46,13 +44,7 @@ function getPagination(query) {
 }
 
 async function findDuplicateTeacher(payload, ignoredTeacherId) {
-  const duplicateChecks = [{ phone: payload.phone }];
-
-  if (payload.telegram) {
-    duplicateChecks.push({ telegram: payload.telegram });
-  }
-
-  const filter = { $or: duplicateChecks };
+  const filter = { phone: payload.phone };
 
   if (ignoredTeacherId) {
     filter._id = { $ne: ignoredTeacherId };
@@ -64,10 +56,6 @@ async function findDuplicateTeacher(payload, ignoredTeacherId) {
 function getDuplicateMessage(duplicate, payload) {
   if (duplicate.phone === payload.phone) {
     return 'Bu telefon raqam bilan o\'qituvchi allaqachon mavjud';
-  }
-
-  if (payload.telegram && duplicate.telegram === payload.telegram) {
-    return 'Bu Telegram username bilan o\'qituvchi allaqachon mavjud';
   }
 
   return "O'qituvchi ma'lumotlari takrorlanmoqda";
@@ -138,7 +126,7 @@ export async function createTeacher(req, res) {
     res.status(201).json(toTeacherResponse(teacher));
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ message: "Telefon yoki Telegram ma'lumoti takrorlangan" });
+      return res.status(409).json({ message: "Telefon ma'lumoti takrorlangan" });
     }
 
     res.status(400).json({ message: "O'qituvchi yaratishda xatolik", error: error.message });
@@ -166,7 +154,7 @@ export async function updateTeacher(req, res) {
     return res.json(toTeacherResponse(teacher));
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(409).json({ message: "Telefon yoki Telegram ma'lumoti takrorlangan" });
+      return res.status(409).json({ message: "Telefon ma'lumoti takrorlangan" });
     }
 
     return res.status(400).json({ message: "O'qituvchi ma'lumotini yangilashda xatolik", error: error.message });

@@ -12,9 +12,18 @@ const allowedImageTypes = new Map([
 ]);
 
 const defaultSettings = {
-  unify: { name: 'Unify', subtitle: 'Boshqaruv tizimi', logoUrl: '' },
-  accounting: { name: 'Yagona buxgalteriya', subtitle: 'Buxgalteriya kurslari', logoUrl: '' },
+  unify: { name: 'Unify', subtitle: 'Boshqaruv tizimi', logoUrl: '', receiptFooter: 'To\'lovingiz uchun rahmat' },
+  accounting: { name: 'Yagona buxgalteriya', subtitle: 'Buxgalteriya kurslari', logoUrl: '', receiptFooter: 'To\'lovingiz uchun rahmat' },
 };
+
+function toBrandResponse(brand, fallback) {
+  return {
+    name: brand?.name?.trim() || fallback.name,
+    subtitle: brand?.subtitle?.trim() || fallback.subtitle,
+    logoUrl: brand?.logoUrl || fallback.logoUrl,
+    receiptFooter: brand?.receiptFooter?.trim() || fallback.receiptFooter,
+  };
+}
 
 async function getSettingsDocument() {
   return BrandingSettings.findOneAndUpdate(
@@ -29,6 +38,7 @@ function normalizeBrand(value, current) {
     name: value?.name?.trim() || current.name,
     subtitle: value?.subtitle?.trim() || '',
     logoUrl: current.logoUrl,
+    receiptFooter: value?.receiptFooter?.trim() || current.receiptFooter || 'To\'lovingiz uchun rahmat',
   };
 }
 
@@ -41,7 +51,12 @@ async function removeManagedLogo(logoUrl) {
 
 export async function getBrandingSettings(_req, res) {
   try {
-    return res.json(await getSettingsDocument());
+    const settings = await getSettingsDocument();
+    return res.json({
+      unify: toBrandResponse(settings.unify, defaultSettings.unify),
+      accounting: toBrandResponse(settings.accounting, defaultSettings.accounting),
+      updatedAt: settings.updatedAt,
+    });
   } catch (error) {
     return res.status(500).json({ message: 'Brending sozlamalarini olishda xatolik', error: error.message });
   }
@@ -53,7 +68,11 @@ export async function updateBrandingSettings(req, res) {
     settings.unify = normalizeBrand(req.body.unify, settings.unify);
     settings.accounting = normalizeBrand(req.body.accounting, settings.accounting);
     await settings.save();
-    return res.json(settings);
+    return res.json({
+      unify: toBrandResponse(settings.unify, defaultSettings.unify),
+      accounting: toBrandResponse(settings.accounting, defaultSettings.accounting),
+      updatedAt: settings.updatedAt,
+    });
   } catch (error) {
     return res.status(400).json({ message: 'Brending sozlamalarini saqlab bo‘lmadi', error: error.message });
   }
@@ -87,7 +106,11 @@ export async function uploadBrandLogo(req, res) {
     settings.markModified(brandKey);
     await settings.save();
     await removeManagedLogo(previousLogoUrl);
-    return res.json(settings);
+    return res.json({
+      unify: toBrandResponse(settings.unify, defaultSettings.unify),
+      accounting: toBrandResponse(settings.accounting, defaultSettings.accounting),
+      updatedAt: settings.updatedAt,
+    });
   } catch (error) {
     return res.status(500).json({ message: 'Logoni yuklab bo‘lmadi', error: error.message });
   }

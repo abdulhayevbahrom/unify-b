@@ -22,12 +22,6 @@ const teacherSchema = new mongoose.Schema(
       maxlength: 32,
       unique: true,
     },
-    telegram: {
-      type: String,
-      trim: true,
-      maxlength: 80,
-      default: '',
-    },
     gender: {
       type: String,
       enum: ['male', 'female'],
@@ -78,14 +72,6 @@ const teacherSchema = new mongoose.Schema(
         return ret;
       },
     },
-  },
-);
-
-teacherSchema.index(
-  { telegram: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { telegram: { $type: 'string', $ne: '' } },
   },
 );
 

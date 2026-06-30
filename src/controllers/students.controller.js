@@ -102,7 +102,6 @@ function toTeacherResponse(teacher) {
     fullName: teacher.fullName,
     subject: teacher.subject,
     phone: teacher.phone,
-    telegram: teacher.telegram,
     gender: teacher.gender,
     experienceYears: teacher.experienceYears,
     status: teacher.status,

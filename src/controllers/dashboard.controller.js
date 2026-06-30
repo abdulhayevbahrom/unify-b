@@ -142,7 +142,6 @@ export async function getDashboard(req, res) {
       monthBalances,
       totalDebtRows,
       payments,
-      approvedAllocationPayments,
       expenses,
       groups,
       teachers,
@@ -161,7 +160,6 @@ export async function getDashboard(req, res) {
       Payment.find({ paidAt: { $gte: monthStart, $lte: monthEnd }, status: { $nin: ['cancelled', 'refunded'] }, cashStatus: 'approved' })
         .populate({ path: 'studentId', populate: { path: 'groupId' } })
         .sort({ paidAt: -1 }),
-      Payment.find({ 'allocations.month': month, status: { $nin: ['cancelled', 'refunded'] }, cashStatus: 'approved' }),
       Expense.find({ spentAt: { $gte: monthStart, $lte: monthEnd } }).sort({ spentAt: -1 }),
       Group.find().populate('teacherId').sort({ status: 1, name: 1 }),
       Teacher.find().sort({ fullName: 1 }),
@@ -173,13 +171,7 @@ export async function getDashboard(req, res) {
     ]);
 
     const chargedAmount = sum(monthBalances, 'chargedAmount');
-    const approvedPaidByGroup = new Map();
-    approvedAllocationPayments.forEach((payment) => payment.allocations.forEach((allocation) => {
-      if (allocation.month !== month || !allocation.groupId) return;
-      const groupId = allocation.groupId.toString();
-      approvedPaidByGroup.set(groupId, (approvedPaidByGroup.get(groupId) || 0) + allocation.amount);
-    }));
-    const allocatedPaidAmount = [...approvedPaidByGroup.values()].reduce((sumValue, value) => sumValue + value, 0);
+    const allocatedPaidAmount = sum(monthBalances, 'paidAmount');
     const monthDebtAmount = Math.max(chargedAmount - allocatedPaidAmount, 0);
     const incomeAmount = sum(payments, 'amount');
     const expenseAmount = sum(expenses, 'amount');
@@ -212,9 +204,10 @@ export async function getDashboard(req, res) {
     }, new Map());
     const balanceTotalsByGroup = monthBalances.reduce((totals, balance) => {
       const groupId = balance.groupId.toString();
-      const current = totals.get(groupId) || { chargedAmount: 0, paidAmount: approvedPaidByGroup.get(groupId) || 0, debtAmount: 0 };
+      const current = totals.get(groupId) || { chargedAmount: 0, paidAmount: 0, debtAmount: 0 };
       current.chargedAmount += balance.chargedAmount;
-      current.debtAmount = Math.max(current.chargedAmount - current.paidAmount, 0);
+      current.paidAmount += balance.paidAmount;
+      current.debtAmount += balance.debtAmount;
       totals.set(groupId, current);
       return totals;
     }, new Map());

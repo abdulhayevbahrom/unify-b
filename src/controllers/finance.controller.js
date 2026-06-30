@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Group } from '../models/group.model.js';
 import { CashClosure } from '../models/cash-closure.model.js';
 import { Notification } from '../models/notification.model.js';
@@ -6,6 +7,7 @@ import { StudentMonthlyBalance } from '../models/student-monthly-balance.model.j
 import { StudentPause } from '../models/student-pause.model.js';
 import { Student } from '../models/student.model.js';
 import { emitToRole } from '../socket.js';
+import { buildXlsxBuffer } from '../utils/xlsx.js';
 
 const paymentMethods = ['cash', 'bank_transfer', 'click'];
 
@@ -196,6 +198,122 @@ function toPauseResponse(pause) {
     _id: undefined,
     __v: undefined,
   };
+}
+
+function escapeRegex(value) {
+  return value.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatMoney(value) {
+  return `${Number(value || 0).toLocaleString('uz-UZ')} so'm`;
+}
+
+function formatDate(value) {
+  return new Date(value).toLocaleString('uz-UZ', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function buildDebtorQuery(query = {}) {
+  const match = { debtAmount: { $gt: 0 } };
+  let groupIdFilter = null;
+
+  if (query.groupId && mongoose.Types.ObjectId.isValid(query.groupId)) {
+    groupIdFilter = [new mongoose.Types.ObjectId(query.groupId)];
+  }
+
+  if (query.subject?.trim()) {
+    const subjectMatches = await Group.find({ subject: new RegExp(escapeRegex(query.subject), 'i') }).select('_id');
+    const subjectGroupIds = subjectMatches.map((group) => group._id);
+    if (!subjectGroupIds.length) {
+      return { match: { ...match, groupId: { $in: [] } }, minDebt: Number(query.minDebt) || 0 };
+    }
+    groupIdFilter = groupIdFilter
+      ? groupIdFilter.filter((groupId) => subjectGroupIds.some((subjectGroupId) => subjectGroupId.toString() === groupId.toString()))
+      : subjectGroupIds;
+  }
+
+  if (groupIdFilter) {
+    if (!groupIdFilter.length) {
+      return { match: { ...match, groupId: { $in: [] } }, minDebt: Number(query.minDebt) || 0 };
+    }
+    match.groupId = { $in: groupIdFilter };
+  }
+
+  if (query.search?.trim()) {
+    const escapedSearch = escapeRegex(query.search);
+    const matchingStudents = await Student.find({
+      $or: [
+        { fullName: new RegExp(escapedSearch, 'i') },
+        { phone: new RegExp(escapedSearch, 'i') },
+        { secondaryPhone: new RegExp(escapedSearch, 'i') },
+      ],
+    }).select('_id');
+    match.studentId = { $in: matchingStudents.map((student) => student._id) };
+  }
+
+  return {
+    match,
+    minDebt: Math.max(Number(query.minDebt) || 0, 0),
+  };
+}
+
+async function getDebtorRows(query = {}, { limit } = {}) {
+  const { match, minDebt } = await buildDebtorQuery(query);
+  const pipeline = [
+    { $match: match },
+    { $sort: { month: 1 } },
+    {
+      $group: {
+        _id: '$studentId',
+        totalDebt: { $sum: '$debtAmount' },
+        months: { $push: { balanceId: '$_id', groupId: '$groupId', month: '$month', debtAmount: '$debtAmount' } },
+      },
+    },
+    { $match: minDebt > 0 ? { totalDebt: { $gte: minDebt } } : {} },
+    { $sort: { totalDebt: -1 } },
+  ];
+
+  if (limit) {
+    pipeline.push({ $limit: limit });
+  }
+
+  const debts = await StudentMonthlyBalance.aggregate(pipeline);
+  const groupIds = [...new Set(debts.flatMap((item) => item.months.map((month) => month.groupId.toString())))];
+  const [students, groups] = await Promise.all([
+    Student.find({ _id: { $in: debts.map((item) => item._id) } }).populate({
+      path: 'groupId',
+      populate: { path: 'teacherId' },
+    }),
+    Group.find({ _id: { $in: groupIds } }),
+  ]);
+  const studentMap = new Map(students.map((student) => [student._id.toString(), student]));
+  const groupMap = new Map(groups.map((group) => [group.id, group.name]));
+
+  return debts.map((debt) => {
+    const student = studentMap.get(debt._id.toString());
+
+    return {
+      studentId: debt._id.toString(),
+      fullName: student?.fullName || '-',
+      phone: student?.phone || '-',
+      secondaryPhone: student?.secondaryPhone || '',
+      subject: student?.groupId?.subject || '',
+      groupName: [...new Set(debt.months.map((month) => groupMap.get(month.groupId.toString()) || '-'))].join(', '),
+      totalDebt: debt.totalDebt,
+      months: debt.months.map((month) => ({
+        balanceId: month.balanceId.toString(),
+        groupId: month.groupId.toString(),
+        groupName: groupMap.get(month.groupId.toString()) || '-',
+        month: month.month,
+        debtAmount: month.debtAmount,
+      })),
+    };
+  });
 }
 
 export async function rebuildStudentBalances(studentId, until = new Date(), excludedPaymentId = null) {
@@ -570,47 +688,55 @@ export async function getPaymentsDashboard(req, res) {
   }
 }
 
-export async function getDebtors(_req, res) {
+export async function getDebtors(req, res) {
   try {
-    const debts = await StudentMonthlyBalance.aggregate([
-      { $match: { debtAmount: { $gt: 0 } } },
-      { $sort: { month: 1 } },
-      {
-        $group: {
-          _id: '$studentId',
-          totalDebt: { $sum: '$debtAmount' },
-          months: { $push: { balanceId: '$_id', groupId: '$groupId', month: '$month', debtAmount: '$debtAmount' } },
-        },
-      },
-      { $sort: { totalDebt: -1 } },
-      { $limit: 100 },
-    ]);
-    const groupIds = [...new Set(debts.flatMap((item) => item.months.map((month) => month.groupId.toString())))];
-    const [students, groups] = await Promise.all([Student.find({ _id: { $in: debts.map((item) => item._id) } }).populate({
-      path: 'groupId',
-      populate: { path: 'teacherId' },
-    }), Group.find({ _id: { $in: groupIds } })]);
-    const studentMap = new Map(students.map((student) => [student._id.toString(), student]));
-    const groupMap = new Map(groups.map((group) => [group.id, group.name]));
-
-    return res.json({
-      data: debts.map((debt) => {
-        const student = studentMap.get(debt._id.toString());
-
-        return {
-          studentId: debt._id.toString(),
-          fullName: student?.fullName || '-',
-          phone: student?.phone || '-',
-          secondaryPhone: student?.secondaryPhone || '',
-          subject: student?.groupId?.subject || '',
-          groupName: [...new Set(debt.months.map((month) => groupMap.get(month.groupId.toString()) || '-'))].join(', '),
-          totalDebt: debt.totalDebt,
-          months: debt.months.map((month) => ({ balanceId: month.balanceId.toString(), groupId: month.groupId.toString(), groupName: groupMap.get(month.groupId.toString()) || '-', month: month.month, debtAmount: month.debtAmount })),
-        };
-      }),
-    });
+    const debts = await getDebtorRows(req.query, { limit: 100 });
+    return res.json({ data: debts });
   } catch (error) {
     return res.status(500).json({ message: "Qarzdorlar ro'yxatini olishda xatolik", error: error.message });
+  }
+}
+
+export async function exportDebtors(req, res) {
+  try {
+    const debts = await getDebtorRows(req.query);
+    const selectedGroup = req.query.groupId && mongoose.Types.ObjectId.isValid(req.query.groupId)
+      ? await Group.findById(req.query.groupId).select('name subject')
+      : null;
+    const rows = [
+      ['Qarzdorlar ro\'yxati'],
+      ['Sana', formatDate(new Date())],
+      ['Filtrlar', [
+        req.query.search?.trim() ? `Qidiruv: ${req.query.search.trim()}` : null,
+        req.query.subject?.trim() ? `Fan: ${req.query.subject.trim()}` : null,
+        req.query.groupId ? `Guruh: ${selectedGroup?.name || req.query.groupId}` : null,
+        Number(req.query.minDebt) > 0 ? `Kamida qarz: ${formatMoney(req.query.minDebt)}` : null,
+      ].filter(Boolean).join(', ') || 'Barcha qarzdorlar'],
+      [],
+      ['F.I.Sh', 'Telefon', 'Qo\'shimcha telefon', 'Fan', 'Guruh', 'Jami qarz', 'Qarz oylari'],
+      ...debts.map((debt) => ([
+        debt.fullName,
+        debt.phone,
+        debt.secondaryPhone || '-',
+        debt.subject || '-',
+        debt.groupName || '-',
+        formatMoney(debt.totalDebt),
+        debt.months.map((month) => `${month.groupName} / ${month.month}: ${formatMoney(month.debtAmount)}`).join('; '),
+      ])),
+    ];
+
+    const xlsx = buildXlsxBuffer({
+      sheetName: 'Qarzdorlar',
+      rows,
+      widths: [28, 18, 18, 18, 24, 16, 60],
+      merges: ['A1:G1', 'A2:G2', 'A3:G3'],
+      autoFilterRef: `A5:G${rows.length}`,
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="qarzdorlar.xlsx"');
+    return res.send(xlsx);
+  } catch (error) {
+    return res.status(500).json({ message: 'Qarzdorlar eksportida xatolik', error: error.message });
   }
 }
 

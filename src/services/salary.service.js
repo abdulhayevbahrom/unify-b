@@ -58,7 +58,6 @@ function buildTeacherFilter(searchRegex) {
       { fullName: searchRegex },
       { subject: searchRegex },
       { phone: searchRegex },
-      { telegram: searchRegex },
     ],
   };
 }

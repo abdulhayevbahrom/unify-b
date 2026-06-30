@@ -7,6 +7,7 @@ import {
   closeCashRegister,
   getStudentFinance,
   getDebtors,
+  exportDebtors,
   getPaymentsDashboard,
   reviewCashClosure,
   updateStudentPause,
@@ -20,6 +21,7 @@ const router = Router();
 router.get('/payments-dashboard', getPaymentsDashboard);
 router.get('/payments', getPaymentsHistory);
 router.get('/debtors', getDebtors);
+router.get('/debtors/export', exportDebtors);
 router.post('/cash-closures', closeCashRegister);
 router.put('/cash-closures/:closureId/review', reviewCashClosure);
 router.get('/students/:studentId', getStudentFinance);

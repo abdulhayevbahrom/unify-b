@@ -5,18 +5,23 @@ import { createSalaryTransaction, getSalaryDashboard } from '../services/salary.
 import { hashPassword } from '../utils/auth.js';
 
 function normalizePayload(body, includePassword = true) {
+  const role = ['owner', 'teacher', 'reception'].includes(body.role) ? body.role : 'employee';
   const payload = {
     fullName: body.fullName?.trim(),
     username: body.username?.trim().toLowerCase(),
-    role: ['owner', 'teacher'].includes(body.role) ? body.role : 'employee',
-    teacherId: body.role === 'teacher' && body.teacherId ? body.teacherId : null,
+    role,
+    teacherId: role === 'teacher' && body.teacherId ? body.teacherId : null,
     permissions: [...new Set((body.permissions || []).filter((permission) => PERMISSIONS.includes(permission)))],
-    monthlySalary: body.role === 'teacher' ? 0 : Number(body.monthlySalary) || 0,
+    monthlySalary: role === 'teacher' ? 0 : Number(body.monthlySalary) || 0,
     status: body.status === 'inactive' ? 'inactive' : 'active',
   };
 
   if (payload.role === 'owner') {
     payload.permissions = PERMISSIONS;
+  }
+
+  if (payload.role === 'reception' && !payload.permissions.includes('reception')) {
+    payload.permissions = [...payload.permissions, 'reception'];
   }
 
   if (includePassword && body.password) {
