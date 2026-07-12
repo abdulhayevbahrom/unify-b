@@ -59,8 +59,6 @@ function normalizeGroupPayload(body) {
     startTime: body.startTime?.trim() || '',
     endTime: body.endTime?.trim() || '',
     startDate,
-    monthlyPrice: Number(body.monthlyPrice) || 0,
-    priceChangeReason: body.priceChangeReason?.trim() || '',
     status: body.status || 'active',
     isEnrollmentOpen: body.isEnrollmentOpen ?? true,
     note: body.note?.trim() || '',
@@ -79,12 +77,10 @@ function validateRequiredGroupFields(payload) {
   if (timeToMinutes(payload.startTime) >= timeToMinutes(payload.endTime)) {
     return "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak";
   }
-  if (!payload.monthlyPrice || payload.monthlyPrice <= 0) return "Oylik to'lov 0 dan katta bo'lishi kerak";
-
   return null;
 }
 
-function toGroupResponse(group, studentsCount = 0) {
+function toGroupResponse(group, studentsCount = 0, monthlyTotal = 0) {
   const data = group.toObject({ virtuals: true });
   const teacher =
     data.teacherId && typeof data.teacherId === 'object'
@@ -111,14 +107,8 @@ function toGroupResponse(group, studentsCount = 0) {
     isEnrollmentOpen: data.isEnrollmentOpen !== false,
     startDate: data.startDate || data.createdAt,
     endedAt: data.endedAt || null,
-    priceHistory:
-      data.priceHistory?.map((item) => ({
-        price: item.price,
-        startedAt: item.startedAt,
-        endedAt: item.endedAt,
-        reason: item.reason,
-      })) || [],
     studentsCount,
+    monthlyTotal,
     _id: undefined,
     __v: undefined,
   };
@@ -192,8 +182,18 @@ export async function getGroups(req, res) {
     ]);
     const studentCountMap = new Map(studentCounts.map((item) => [item._id.toString(), item.count]));
 
+    const enrolledStudents = await Student.find({ 'enrollments.groupId': { $in: groups.map((group) => group._id) } }).select('enrollments');
+    const monthlyTotals = new Map(groups.map((group) => [group._id.toString(), 0]));
+    enrolledStudents.forEach((student) => {
+      student.enrollments.filter((item) => item.status === 'active').forEach((item) => {
+        const groupId = item.groupId.toString();
+        const group = groups.find((candidate) => candidate._id.toString() === groupId);
+        if (group) monthlyTotals.set(groupId, (monthlyTotals.get(groupId) || 0) + (Number(item.monthlyPrice) || Number(group.monthlyPrice) || 0));
+      });
+    });
+
     res.json({
-      data: groups.map((group) => toGroupResponse(group, studentCountMap.get(group._id.toString()) || 0)),
+      data: groups.map((group) => toGroupResponse(group, studentCountMap.get(group._id.toString()) || 0, monthlyTotals.get(group._id.toString()) || 0)),
       pagination: {
         page,
         limit,
@@ -220,9 +220,16 @@ export async function getGroupById(req, res) {
       return res.status(404).json({ message: 'Guruh topilmadi' });
     }
 
-    const studentsCount = await Student.countDocuments({ $or: [{ groupId: group._id }, { enrollments: { $elemMatch: { groupId: group._id, status: 'active' } } }] });
+    const [studentsCount, enrolledStudents] = await Promise.all([
+      Student.countDocuments({ $or: [{ groupId: group._id }, { enrollments: { $elemMatch: { groupId: group._id, status: 'active' } } }] }),
+      Student.find({ enrollments: { $elemMatch: { groupId: group._id, status: 'active' } } }).select('enrollments'),
+    ]);
+    const monthlyTotal = enrolledStudents.reduce((total, student) => {
+      const enrollment = student.enrollments.find((item) => item.status === 'active' && item.groupId.toString() === group.id);
+      return total + (Number(enrollment?.monthlyPrice) || Number(group.monthlyPrice) || 0);
+    }, 0);
 
-    return res.json(toGroupResponse(group, studentsCount));
+    return res.json(toGroupResponse(group, studentsCount, monthlyTotal));
   } catch (error) {
     return res.status(500).json({ message: "Guruh ma'lumotini olishda xatolik", error: error.message });
   }
@@ -266,15 +273,6 @@ export async function createGroup(req, res) {
       isEnrollmentOpen: payload.status === 'active' ? payload.isEnrollmentOpen : false,
       endedAt: payload.status === 'active' ? null : new Date(),
     });
-    group.priceHistory = [
-      {
-        price: payload.monthlyPrice,
-        startedAt: new Date(),
-        endedAt: null,
-        reason: payload.priceChangeReason || 'Boshlangich narx',
-      },
-    ];
-    await group.save();
     const populatedGroup = await group.populate('teacherId');
 
     return res.status(201).json(toGroupResponse(populatedGroup));
@@ -324,24 +322,6 @@ export async function updateGroup(req, res) {
 
     if (!group) {
       return res.status(404).json({ message: 'Guruh topilmadi' });
-    }
-
-    const priceChanged = group.monthlyPrice !== payload.monthlyPrice;
-
-    if (priceChanged) {
-      const now = new Date();
-      const activePrice = group.priceHistory.find((item) => !item.endedAt);
-
-      if (activePrice) {
-        activePrice.endedAt = now;
-      }
-
-      group.priceHistory.push({
-        price: payload.monthlyPrice,
-        startedAt: now,
-        endedAt: null,
-        reason: payload.priceChangeReason || "Narx o'zgartirildi",
-      });
     }
 
     const statusChanged = group.status !== payload.status;

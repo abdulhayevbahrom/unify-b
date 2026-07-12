@@ -6,6 +6,7 @@ import { Payment } from '../models/payment.model.js';
 import { StudentMonthlyBalance } from '../models/student-monthly-balance.model.js';
 import { StudentPause } from '../models/student-pause.model.js';
 import { Student } from '../models/student.model.js';
+import { ExtraLesson } from '../models/extra-lesson.model.js';
 import { emitToRole } from '../socket.js';
 import { buildXlsxBuffer } from '../utils/xlsx.js';
 
@@ -65,6 +66,10 @@ function getPriceForMonth(group, month) {
     .find((item) => item.startedAt <= monthEnd && (!item.endedAt || item.endedAt >= monthStart));
 
   return priceItem?.price || group.monthlyPrice || 0;
+}
+
+function getEnrollmentPriceForMonth(enrollment, group, month) {
+  return Number(enrollment.monthlyPrice) > 0 ? Number(enrollment.monthlyPrice) : getPriceForMonth(group, month);
 }
 
 function getPauseDiscount(month, monthlyPrice, pauses) {
@@ -356,7 +361,7 @@ export async function rebuildStudentBalances(studentId, until = new Date(), excl
   for (const { enrollment, group, months } of enrollmentPeriods) {
     for (const month of months) {
     const key = `${group._id}:${month}`;
-    const monthlyPriceSnapshot = getPriceForMonth(group, month);
+    const monthlyPriceSnapshot = getEnrollmentPriceForMonth(enrollment, group, month);
     const courseDiscountAmount = getCourseDiscount(month, monthlyPriceSnapshot, enrollment);
     const priceAfterCourseDiscount = Math.max(monthlyPriceSnapshot - courseDiscountAmount, 0);
     const groupPauses = pauses.filter((pause) => pause.groupId.toString() === group._id.toString());
@@ -454,6 +459,7 @@ export async function getStudentFinance(req, res) {
         startedAt: item.startedAt,
         endedAt: item.endedAt || null,
         status: item.status,
+        monthlyPrice: Number(item.monthlyPrice) || getPriceForMonth(item.groupId, toMonthKey(item.startedAt)),
         discountType: item.discountType || 'none',
         discountValue: item.discountValue || 0,
         discountReason: item.discountReason || '',
@@ -517,6 +523,7 @@ export async function updatePayment(req, res) {
     const payment = await Payment.findById(req.params.paymentId);
     if (!payment) return res.status(404).json({ message: 'To‘lov topilmadi' });
     if (payment.status !== 'active') return res.status(409).json({ message: 'Bekor qilingan to‘lovni tahrirlab bo‘lmaydi' });
+    if (payment.extraLessonId) return res.status(409).json({ message: "Qo'shimcha dars to'lovini shu bo'limdan tahrirlab bo'lmaydi" });
     const data = await preparePayment(payment.studentId, { ...req.body, paidAt: req.body.paidAt || payment.paidAt }, payment._id);
     payment.editHistory.push({ amount: payment.amount, method: payment.method, paidAt: payment.paidAt, note: payment.note, editedBy: req.user._id });
     payment.set(data);
@@ -579,6 +586,13 @@ export async function reversePayment(req, res) {
       payment.cashStatus = 'open';
     }
     await payment.save();
+    if (payment.extraLessonId) {
+      const lesson = await ExtraLesson.findById(payment.extraLessonId);
+      if (lesson) {
+        lesson.paidAmount = Math.max(lesson.paidAmount - payment.amount, 0);
+        await lesson.save();
+      }
+    }
     await syncCashClosure(pendingClosureId);
     await rebuildStudentBalances(payment.studentId);
     return res.json(toPaymentResponse(payment));
@@ -658,7 +672,9 @@ export async function activatePausedStudent(req, res) {
 export async function getPaymentsDashboard(req, res) {
   try {
     const [openPayments, approvedClosures, pendingClosures] = await Promise.all([
-      Payment.find({ cashStatus: 'open', status: { $nin: ['cancelled', 'refunded'] } }).sort({ paidAt: -1 }),
+      Payment.find({ cashStatus: 'open', status: { $nin: ['cancelled', 'refunded'] } })
+        .populate({ path: 'studentId', select: 'fullName groupId', populate: { path: 'groupId', select: 'name' } })
+        .sort({ paidAt: -1 }),
       CashClosure.find({ status: 'approved' }).sort({ to: -1 }).limit(20),
       CashClosure.find({ status: 'pending_owner' }).sort({ to: -1 }).limit(20),
     ]);
@@ -673,7 +689,17 @@ export async function getPaymentsDashboard(req, res) {
         totalAmount: openStats.totalAmount,
         totalsByMethod: openStats.totalsByMethod,
         paymentsCount: openPayments.length,
-        payments: openPayments.map(toPaymentResponse),
+        payments: openPayments.map((payment) => {
+          const student = payment.studentId;
+          return {
+            ...toPaymentResponse(payment),
+            student: student ? {
+              id: student._id.toString(),
+              fullName: student.fullName,
+              groupName: student.groupId?.name || '',
+            } : null,
+          };
+        }),
       },
       today: {
         totalAmount: todayStats.totalAmount,

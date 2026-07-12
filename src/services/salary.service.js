@@ -98,6 +98,10 @@ function getPriceForMonth(group, month) {
   return priceItem?.price || group.monthlyPrice || 0;
 }
 
+function getEnrollmentPriceForMonth(enrollment, group, month) {
+  return Number(enrollment.monthlyPrice) > 0 ? Number(enrollment.monthlyPrice) : getPriceForMonth(group, month);
+}
+
 function getPauseDiscount(month, monthlyPrice, pauses) {
   const monthStart = getMonthStart(month);
   const monthEnd = getMonthEnd(month);
@@ -226,7 +230,7 @@ async function buildTeacherStats(teachers, month) {
       if (!group || !teacherId) return;
 
       getEnrollmentMonths(enrollment, month).forEach((enrollmentMonth) => {
-        const monthlyPrice = getPriceForMonth(group, enrollmentMonth);
+        const monthlyPrice = getEnrollmentPriceForMonth(enrollment, group, enrollmentMonth);
         const studentPauses = pauses.filter(
           (pause) =>
             pause.studentId.toString() === student._id.toString()

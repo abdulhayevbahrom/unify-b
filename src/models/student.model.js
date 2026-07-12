@@ -42,6 +42,7 @@ const studentSchema = new mongoose.Schema(
     enrollments: [
       {
         groupId: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
+        monthlyPrice: { type: Number, min: 0, default: 0 },
         startedAt: { type: Date, required: true, default: Date.now },
         endedAt: { type: Date, default: null },
         status: { type: String, enum: ['active', 'finished'], default: 'active' },

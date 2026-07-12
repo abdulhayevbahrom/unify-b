@@ -11,6 +11,7 @@ import usersRouter from './routes/users.routes.js';
 import notificationsRouter from './routes/notifications.routes.js';
 import settingsRouter from './routes/settings.routes.js';
 import reportsRouter from './routes/reports.routes.js';
+import extraLessonsRouter from './routes/extra-lessons.routes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { authenticate, requireAnyPermission } from './middleware/auth.js';
@@ -65,6 +66,7 @@ app.use(
 );
 app.use('/api/students', authenticate, requireAnyPermission('students', 'reception', 'groups'), studentsRouter);
 app.use('/api/finance', authenticate, requireAnyPermission('payments', 'students'), financeRouter);
+app.use('/api/extra-lessons', authenticate, requireAnyPermission('payments', 'students'), extraLessonsRouter);
 app.use('/api/expenses', authenticate, requireAnyPermission('expenses'), expensesRouter);
 app.use('/api/users', authenticate, requireAnyPermission('employees'), usersRouter);
 app.use('/api/reports', authenticate, requireAnyPermission('dashboard', 'payments', 'expenses'), reportsRouter);

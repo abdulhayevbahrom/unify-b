@@ -58,6 +58,11 @@ const paymentSchema = new mongoose.Schema(
       min: 0,
       default: 0,
     },
+    extraLessonId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ExtraLesson',
+      default: null,
+    },
     cashClosureId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'CashClosure',
@@ -104,6 +109,7 @@ const paymentSchema = new mongoose.Schema(
         ret.id = ret._id.toString();
         ret.studentId = ret.studentId?.toString();
         ret.cashClosureId = ret.cashClosureId?.toString() || null;
+        ret.extraLessonId = ret.extraLessonId?.toString() || null;
         ret.createdBy = ret.createdBy?.toString() || null;
         ret.reversedBy = ret.reversedBy?.toString() || null;
         delete ret._id;
@@ -118,5 +124,6 @@ paymentSchema.index({ studentId: 1, paidAt: -1 });
 paymentSchema.index({ method: 1, paidAt: -1 });
 paymentSchema.index({ cashClosureId: 1 });
 paymentSchema.index({ cashStatus: 1, paidAt: -1 });
+paymentSchema.index({ extraLessonId: 1 });
 
 export const Payment = mongoose.model('Payment', paymentSchema);

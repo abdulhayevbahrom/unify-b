@@ -1,5 +1,6 @@
 import { Group } from '../models/group.model.js';
 import { Student } from '../models/student.model.js';
+import { rebuildStudentBalances } from './finance.controller.js';
 
 async function buildStudentFilter(query, user) {
   const conditions = [];
@@ -90,6 +91,7 @@ function validateRequiredStudentFields(payload) {
     return 'Ikkinchi telefon asosiy telefon bilan bir xil bo‘lmasligi kerak';
   }
   if (!payload.groupId) return 'Guruh tanlanishi kerak';
+  if (!Number.isFinite(Number(payload.monthlyPrice)) || Number(payload.monthlyPrice) < 1000) return "Kurs to'lovi kamida 1 000 so'm bo'lishi kerak";
 
   return null;
 }
@@ -126,8 +128,6 @@ function toGroupResponse(group) {
     startTime: group.startTime,
     endTime: group.endTime,
     startDate: group.startDate || group.createdAt,
-    monthlyPrice: group.monthlyPrice,
-    priceHistory: group.priceHistory || [],
     isEnrollmentOpen: group.isEnrollmentOpen !== false,
     endedAt: group.endedAt || null,
     note: group.note,
@@ -173,6 +173,7 @@ function toStudentResponse(student) {
       startedAt: item.startedAt,
       endedAt: item.endedAt || null,
       status: item.status,
+      monthlyPrice: Number(item.monthlyPrice) || Number(enrollmentGroup?.monthlyPrice) || 0,
       discountType: item.discountType || 'none',
       discountValue: item.discountValue || 0,
       discountReason: item.discountReason || '',
@@ -319,6 +320,7 @@ export async function createStudent(req, res) {
       ],
       enrollments: [{
         groupId: group._id,
+        monthlyPrice: Number(payload.monthlyPrice),
         startedAt: new Date(),
         status: 'active',
         discountType: payload.discountType || 'none',
@@ -410,14 +412,18 @@ export async function updateStudent(req, res) {
         previousEnrollment.status = 'finished';
         previousEnrollment.endedAt = now;
       }
-      student.enrollments.push({ groupId: group._id, startedAt: now, status: 'active' });
+      student.enrollments.push({ groupId: group._id, monthlyPrice: Number(payload.monthlyPrice), startedAt: now, status: 'active' });
     }
+
+    const activeEnrollment = student.enrollments.find((item) => item.status === 'active' && item.groupId.toString() === payload.groupId);
+    if (activeEnrollment) activeEnrollment.monthlyPrice = Number(payload.monthlyPrice);
 
     student.set({
       ...payload,
       leftAt: payload.status === 'left' ? student.leftAt || new Date() : null,
     });
     const savedStudent = await student.save();
+    await rebuildStudentBalances(savedStudent._id);
     const populatedStudent = await savedStudent.populate([
       { path: 'groupId', populate: { path: 'teacherId' } },
       { path: 'enrollments.groupId', populate: { path: 'teacherId' } },
@@ -435,6 +441,9 @@ export async function updateStudent(req, res) {
 
 export async function addStudentEnrollment(req, res) {
   try {
+    if (!Number.isFinite(Number(req.body.monthlyPrice)) || Number(req.body.monthlyPrice) < 1000) {
+      return res.status(400).json({ message: "Kurs to'lovi kamida 1 000 so'm bo'lishi kerak" });
+    }
     const student = await Student.findById(req.params.id);
     const group = await Group.findById(req.body.groupId);
     if (!student || !group) return res.status(404).json({ message: "O'quvchi yoki guruh topilmadi" });
@@ -447,6 +456,7 @@ export async function addStudentEnrollment(req, res) {
     }
     student.enrollments.push({
       groupId: group._id,
+      monthlyPrice: Number(req.body.monthlyPrice) || 0,
       startedAt: req.body.startedAt || new Date(),
       status: 'active',
       discountType: req.body.discountType || 'none',
@@ -455,6 +465,7 @@ export async function addStudentEnrollment(req, res) {
       discountHistory: req.body.discountType && req.body.discountType !== 'none' ? [{ type: req.body.discountType, value: Number(req.body.discountValue) || 0, reason: req.body.discountReason?.trim() || '', startedAt: new Date() }] : [],
     });
     await student.save();
+    await rebuildStudentBalances(student._id);
     const populated = await student.populate([
       { path: 'groupId', populate: { path: 'teacherId' } },
       { path: 'enrollments.groupId', populate: { path: 'teacherId' } },
@@ -475,6 +486,11 @@ export async function updateStudentEnrollment(req, res) {
       enrollment.status = 'finished';
       enrollment.endedAt = req.body.endedAt || new Date();
     }
+    if (req.body.monthlyPrice !== undefined) {
+      const monthlyPrice = Number(req.body.monthlyPrice);
+      if (!Number.isFinite(monthlyPrice) || monthlyPrice < 1000) return res.status(400).json({ message: "Kurs to'lovi kamida 1 000 so'm bo'lishi kerak" });
+      enrollment.monthlyPrice = monthlyPrice;
+    }
     if (['none', 'percentage', 'fixed'].includes(req.body.discountType)) {
       const now = new Date();
       const activeDiscount = enrollment.discountHistory.find((item) => !item.endedAt);
@@ -485,6 +501,7 @@ export async function updateStudentEnrollment(req, res) {
       if (req.body.discountType !== 'none') enrollment.discountHistory.push({ type: req.body.discountType, value: enrollment.discountValue, reason: enrollment.discountReason, startedAt: now });
     }
     await student.save();
+    await rebuildStudentBalances(student._id);
     return res.json({ message: 'Kurs ma’lumoti yangilandi' });
   } catch (error) {
     return res.status(400).json({ message: 'Kurs ma’lumotini yangilab bo‘lmadi', error: error.message });

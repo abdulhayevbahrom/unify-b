@@ -55,8 +55,8 @@ const groupSchema = new mongoose.Schema(
     },
     monthlyPrice: {
       type: Number,
-      required: [true, "Oylik to'lov kiritilishi kerak"],
-      min: [1, "Oylik to'lov 0 dan katta bo'lishi kerak"],
+      default: 0,
+      min: 0,
     },
     priceHistory: [
       {

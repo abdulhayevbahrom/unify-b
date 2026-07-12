@@ -9,6 +9,7 @@ import { EmployeeSalaryTransaction } from '../models/employee-salary-transaction
 import { getSalaryDashboard } from '../services/salary.service.js';
 
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
+const datePattern = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const paymentMethods = ['cash', 'bank_transfer', 'click'];
 
 function getCurrentMonth() {
@@ -18,6 +19,25 @@ function getCurrentMonth() {
 
 function normalizeMonth(month) {
   return monthPattern.test(month || '') ? month : getCurrentMonth();
+}
+
+function getCurrentDate() {
+  const today = new Date();
+  return `${getCurrentMonth()}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+function normalizeDate(date) {
+  if (!datePattern.test(date || '')) return getCurrentDate();
+  const [year, month, day] = date.split('-').map(Number);
+  const normalized = new Date(year, month - 1, day);
+  return normalized.getFullYear() === year && normalized.getMonth() === month - 1 && normalized.getDate() === day
+    ? date
+    : getCurrentDate();
+}
+
+function getDateStart(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function getMonthStart(month) {
@@ -131,12 +151,12 @@ function toSalaryActivity(transaction, recipientsMap) {
 export async function getDashboard(req, res) {
   try {
     const month = normalizeMonth(req.query.month);
+    const selectedDate = normalizeDate(req.query.date);
     const monthStart = getMonthStart(month);
     const monthEnd = getMonthEnd(month);
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const selectedDateStart = getDateStart(selectedDate);
+    const selectedDateEnd = new Date(selectedDateStart);
+    selectedDateEnd.setHours(23, 59, 59, 999);
     const [
       salaryDashboard,
       monthBalances,
@@ -148,8 +168,8 @@ export async function getDashboard(req, res) {
       users,
       studentsAfterRebuild,
       salaryTransactions,
-      todayPayments,
-      todayExpenses,
+      selectedDatePayments,
+      selectedDateExpenses,
     ] = await Promise.all([
       getSalaryDashboard(month),
       StudentMonthlyBalance.find({ month }),
@@ -166,8 +186,8 @@ export async function getDashboard(req, res) {
       User.find().sort({ role: 1, fullName: 1 }),
       Student.find().populate('groupId').sort({ createdAt: -1 }),
       EmployeeSalaryTransaction.find({ paidAt: { $gte: monthStart, $lte: monthEnd } }).sort({ paidAt: -1 }),
-      Payment.find({ paidAt: { $gte: todayStart, $lte: todayEnd }, status: { $nin: ['cancelled', 'refunded'] }, cashStatus: 'approved' }),
-      Expense.find({ spentAt: { $gte: todayStart, $lte: todayEnd } }),
+      Payment.find({ paidAt: { $gte: selectedDateStart, $lte: selectedDateEnd }, status: { $nin: ['cancelled', 'refunded'] }, cashStatus: 'approved' }),
+      Expense.find({ spentAt: { $gte: selectedDateStart, $lte: selectedDateEnd } }),
     ]);
 
     const chargedAmount = sum(monthBalances, 'chargedAmount');
@@ -262,6 +282,7 @@ export async function getDashboard(req, res) {
 
     return res.json({
       month,
+      selectedDate,
       summary: {
         incomeAmount,
         expenseAmount,
@@ -275,10 +296,10 @@ export async function getDashboard(req, res) {
         salaryAccruedAmount: salaryDashboard.summary.monthSalaryAmount,
         salaryPayableAmount: salaryDashboard.summary.totalReceivableAmount,
       },
-      today: {
-        incomeAmount: sum(todayPayments, 'amount'),
-        expenseAmount: sum(todayExpenses, 'amount'),
-        netAmount: sum(todayPayments, 'amount') - sum(todayExpenses, 'amount'),
+      day: {
+        incomeAmount: sum(selectedDatePayments, 'amount'),
+        expenseAmount: sum(selectedDateExpenses, 'amount'),
+        netAmount: sum(selectedDatePayments, 'amount') - sum(selectedDateExpenses, 'amount'),
       },
       counts: {
         students: studentCounts,
