@@ -338,9 +338,14 @@ export async function rebuildStudentBalances(studentId, until = new Date(), excl
   }
   const enrollmentPeriods = student.enrollments.filter((item) => item.groupId).map((item) => {
     const group = item.groupId;
+    // To'lov faqat o'quvchi yozilganidan va guruh darsi boshlanganidan keyin hisoblanadi.
+    const billingStart = new Date(Math.max(
+      new Date(item.startedAt).getTime(),
+      new Date(group.startDate || item.startedAt).getTime(),
+    ));
     const endCandidates = [until, item.endedAt, group.endedAt].filter(Boolean);
     const effectiveUntil = new Date(Math.min(...endCandidates.map((date) => new Date(date).getTime())));
-    return { enrollment: item, group, months: getMonthsBetween(new Date(item.startedAt), effectiveUntil) };
+    return { enrollment: item, group, billingStart, months: getMonthsBetween(billingStart, effectiveUntil) };
   });
   const [pauses, payments] = await Promise.all([
     StudentPause.find({ studentId, status: { $ne: 'cancelled' } }),
@@ -358,7 +363,14 @@ export async function rebuildStudentBalances(studentId, until = new Date(), excl
   });
 
   const balances = [];
-  for (const { enrollment, group, months } of enrollmentPeriods) {
+  for (const { enrollment, group, billingStart, months } of enrollmentPeriods) {
+    // Guruh boshlanishi keyinga surilsa, dars boshlanmagan oylar uchun avval yaratilgan balanslarni olib tashlaymiz.
+    await StudentMonthlyBalance.deleteMany({
+      studentId,
+      groupId: group._id,
+      month: { $lt: toMonthKey(billingStart) },
+    });
+
     for (const month of months) {
     const key = `${group._id}:${month}`;
     const monthlyPriceSnapshot = getEnrollmentPriceForMonth(enrollment, group, month);

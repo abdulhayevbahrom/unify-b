@@ -329,6 +329,7 @@ export async function createStudent(req, res) {
         discountHistory: payload.discountType && payload.discountType !== 'none' ? [{ type: payload.discountType, value: Number(payload.discountValue) || 0, reason: payload.discountReason?.trim() || '', startedAt: new Date() }] : [],
       }],
     });
+    await rebuildStudentBalances(student._id);
     const populatedStudent = await student.populate([
       { path: 'groupId', populate: { path: 'teacherId' } },
       { path: 'enrollments.groupId', populate: { path: 'teacherId' } },

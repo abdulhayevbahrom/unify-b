@@ -300,6 +300,11 @@ export async function getDashboard(req, res) {
         incomeAmount: sum(selectedDatePayments, 'amount'),
         expenseAmount: sum(selectedDateExpenses, 'amount'),
         netAmount: sum(selectedDatePayments, 'amount') - sum(selectedDateExpenses, 'amount'),
+        payments: {
+          totalAmount: sum(selectedDatePayments, 'amount'),
+          count: selectedDatePayments.length,
+          totalsByMethod: buildMethodTotals(selectedDatePayments),
+        },
       },
       counts: {
         students: studentCounts,
